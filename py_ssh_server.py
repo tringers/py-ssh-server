@@ -11,23 +11,14 @@ diffieHellman = pyDH.DiffieHellman()
 class Py_ssh_server:
 
     def __init__(self, host="", port=22):
+        self.generateKeys()
         self.HOST = host
         self.PORT = port
         self.user = ""
         self.password = ""
         self.auth = False
-        self.publicKey = diffieHellman.gen_public_key()
+        (self.publicKey, self.privateKey) = self.loadKeys()
         self.sharedKey = None
-
-    def send(self, conn, message):
-        message = rsa.encrypt(message.encode(), self.publicKey)
-        conn.sendall(bytes("{}".format(message), "utf-8"))
-
-    def recieve(self, conn):
-        data = conn.recv(1024)
-        data = data.decode("utf-8")
-        data = rsa.decrypt(data, self.sharedKey)
-        return str(data)
 
     def start(self):
 
@@ -35,13 +26,23 @@ class Py_ssh_server:
 
             s.bind((self.HOST, self.PORT))
             s.listen()
+
             conn, addr = s.accept()
 
             with conn:
 
-                self.send(conn, self.publicKey)
+                self.sendPublicKey(conn)
+
+                recivevedpub = self.recievePublicKey(s)
+                recivevedpub = str(recivevedpub).split("(")[1].split(",")
+                recivevedpub[1] = recivevedpub[1].split(")")[0].strip()
+
+                keyN = int(recivevedpub[0])
+                keyE = int(recivevedpub[1])
+                pub = rsa.PublicKey(keyN, keyE)
+
                 self.sharedKey = diffieHellman.gen_shared_key(
-                    self.recieve(conn)
+                    pub
                 )
 
                 self.send(conn, "User:")
@@ -89,9 +90,41 @@ class Py_ssh_server:
             conn.close()
             sys.exit()
 
-        output = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        self.send(conn, "{}".format(output.stdout))
-
-
+        try:
+            output = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            self.send(conn, "{}".format(output.stdout))
+        except:
+            self.send(conn, "command not found: {}".format(command[0]))
+            output = "command not found: {}".format(command[0])
 
         return output
+
+    def sendPublicKey(self, conn):
+        conn.sendall(bytes("{}".format(self.publicKey), "utf-8"))
+
+    def send(self, conn, message):
+        message = rsa.encrypt(message.encode('ascii'), self.publicKey)
+        conn.sendall(bytes("{}".format(message), "utf-8"))
+
+    def recievePublicKey(self, sock):
+        data = sock.recv(1024)
+        return data
+
+    def recieve(self, conn):
+        data = conn.recv(1024)
+        data = rsa.decrypt(data, self.sharedKey)
+        return str(data)
+
+    def generateKeys(self):
+        (publicKey, privateKey) = rsa.newkeys(1024)
+        with open('keys/publicKey.pem', 'wb') as p:
+            p.write(publicKey.save_pkcs1('PEM'))
+        with open('keys/privateKey.pem', 'wb') as p:
+            p.write(privateKey.save_pkcs1('PEM'))
+
+    def loadKeys(self):
+        with open('keys/publicKey.pem', 'rb') as p:
+            publicKey = rsa.PublicKey.load_pkcs1(p.read())
+        with open('keys/privateKey.pem', 'rb') as p:
+            privateKey = rsa.PrivateKey.load_pkcs1(p.read())
+        return publicKey, privateKey
