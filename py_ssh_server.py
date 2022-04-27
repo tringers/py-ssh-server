@@ -1,8 +1,12 @@
 import socket
 import subprocess
 import sys
+import pyDH
+import rsa
 
 import authenticator
+
+diffieHellman = pyDH.DiffieHellman()
 
 class Py_ssh_server:
 
@@ -12,13 +16,18 @@ class Py_ssh_server:
         self.user = ""
         self.password = ""
         self.auth = False
+        self.publicKey = diffieHellman.gen_public_key()
+        self.sharedKey = None
 
     def send(self, conn, message):
+        message = rsa.encrypt(message.encode(), self.publicKey)
         conn.sendall(bytes("{}".format(message), "utf-8"))
 
     def recieve(self, conn):
         data = conn.recv(1024)
-        return str(data.decode("utf-8"))
+        data = data.decode("utf-8")
+        data = rsa.decrypt(data, self.sharedKey)
+        return str(data)
 
     def start(self):
 
@@ -29,6 +38,11 @@ class Py_ssh_server:
             conn, addr = s.accept()
 
             with conn:
+
+                self.send(conn, self.publicKey)
+                self.sharedKey = diffieHellman.gen_shared_key(
+                    self.recieve(conn)
+                )
 
                 self.send(conn, "User:")
 
